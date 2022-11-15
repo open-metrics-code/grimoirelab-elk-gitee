@@ -197,7 +197,8 @@ class GiteeEnrich(Enrich):
         """
         comments = [comment for comment in item['review_comments_data']
                          if item['user']['login'] != comment['user']['login'] \
-                             and not (comment['user']['name'].endswith("bot"))]
+                             and not (comment['user']['name'].endswith("bot")) \
+                                 and not (comment['user']['name'].endswith("ci"))]
         return len(comments) 
 
     def get_time_to_merge_request_response(self, item):
