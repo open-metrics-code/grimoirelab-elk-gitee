@@ -247,7 +247,7 @@ class GiteeEnrich(Enrich):
 
         commenters = [comment['user']['login'] for comment in item['comments_data']]
         return len(set(commenters))
-
+    
     
     
 
@@ -365,10 +365,14 @@ class GiteeEnrich(Enrich):
             rich_pr['time_to_merge_request_response'] = \
                 get_time_diff_days(str_to_datetime(pull_request['created_at']), min_review_date)
             rich_pr['num_review_comments_without_bot'] = \
-                self.get_num_of_reviews_without_bot(pull_request)
+                                   self.get_num_of_reviews_without_bot(pull_request)
             rich_pr['time_to_first_attention_without_bot'] = \
                 get_time_diff_days(str_to_datetime(pull_request['created_at']),
                                     self.get_time_to_first_review_attention_without_bot(pull_request))
+        if 'linked_issues' in pull_request:
+            rich_pr['linked_issues_count'] = len(pull_request['linked_issues'])
+
+        rich_pr['commits_data'] = pull_request['commits_data']
 
         
         if 'linked_issues' in pull_request:
