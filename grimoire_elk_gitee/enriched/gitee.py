@@ -302,12 +302,14 @@ class GiteeEnrich(Enrich):
         if user is not None and user:
             rich_pr['user_name'] = user['name']
             rich_pr['author_name'] = user['name']
+            rich_pr['user_email'] = user.get('email', None)
             rich_pr["user_domain"] = self.get_email_domain(user['email']) if user.get('email', None) else None
             rich_pr['user_org'] = user.get('company', None)
             rich_pr['user_location'] = user.get('location', None)
             rich_pr['user_geolocation'] = None
         else:
             rich_pr['user_name'] = None
+            rich_pr['user_email'] = None
             rich_pr["user_domain"] = None
             rich_pr['user_org'] = None
             rich_pr['user_location'] = None
@@ -418,12 +420,14 @@ class GiteeEnrich(Enrich):
         if user is not None and user:
             rich_issue['user_name'] = user['name']
             rich_issue['author_name'] = user['name']
+            rich_issue['user_email'] = user.get('email', None)
             rich_issue["user_domain"] = self.get_email_domain(user['email']) if user.get('email', None) else None
             rich_issue['user_org'] = user.get('company', None)
             rich_issue['user_location'] = user.get('location', None)
             rich_issue['user_geolocation'] = None
         else:
             rich_issue['user_name'] = None
+            rich_issue['user_email'] = None
             rich_issue["user_domain"] = None
             rich_issue['user_org'] = None
             rich_issue['user_location'] = None
@@ -489,7 +493,7 @@ class GiteeEnrich(Enrich):
                 get_time_diff_days(str_to_datetime(issue['created_at']),
                                     self.get_time_to_first_attention_without_bot(issue))
         
-               
+                    
         rich_issue.update(self.get_grimoire_fields(issue['created_at'], "issue"))
 
         
