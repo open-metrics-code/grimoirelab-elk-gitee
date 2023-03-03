@@ -386,9 +386,7 @@ class GiteeEnrich(Enrich):
             rich_pr['time_to_first_attention_without_bot'] = \
                 get_time_diff_days(str_to_datetime(pull_request['created_at']),
                                     self.get_time_to_first_review_attention_without_bot(pull_request))
-        if 'linked_issues' in pull_request:
-            rich_pr['linked_issues_count'] = len(pull_request['linked_issues'])
-
+                                    
         rich_pr['commits_data'] = pull_request['commits_data']
 
         
@@ -566,7 +564,7 @@ class GiteeEnrich(Enrich):
             rich_releases_dict['target_commitish'] = release['target_commitish']
             rich_releases_dict['prerelease'] = release['prerelease']
             rich_releases_dict['name'] = release['name']
-            rich_releases_dict['body'] = release['body']
+            # rich_releases_dict['body'] = release['body']
             rich_releases_dict['created_at'] = release['created_at']
             release_author = release['author']
             rich_releases_author_dict = {}

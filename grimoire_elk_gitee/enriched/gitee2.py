@@ -323,8 +323,8 @@ class GiteeEnrich2(Enrich):
             ecomment['sub_type'] = ISSUE_COMMENT_TYPE
 
             # Copy data from the raw comment
-            ecomment['body'] = comment['body'][:self.KEYWORD_MAX_LENGTH]
-            ecomment['body_analyzed'] = comment['body']
+            # ecomment['body'] = comment['body'][:self.KEYWORD_MAX_LENGTH]
+            # ecomment['body_analyzed'] = comment['body']
             # ecomment['url'] = comment['html_url']
 
             # extract reactions and add it to enriched item
