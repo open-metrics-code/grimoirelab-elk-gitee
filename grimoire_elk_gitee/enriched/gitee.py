@@ -358,6 +358,13 @@ class GiteeEnrich(Enrich):
             rich_pr['merge_author_org'] = None
             rich_pr['merge_author_location'] = None
             rich_pr['merge_author_geolocation'] = None
+        
+        testers_login = set()
+        [testers_login.add(tester.get('login')) for tester in pull_request['testers'] if 'testers' in pull_request]
+        rich_pr['testers_login'] = list(testers_login)
+        requested_reviewers_login = set()
+        [requested_reviewers_login.add(requested_reviewer.get('login')) for requested_reviewer in pull_request['assignees'] if 'assignees' in pull_request]
+        rich_pr['requested_reviewers_login'] = list(requested_reviewers_login)
 
         rich_pr['id'] = pull_request['id']
         rich_pr['id_in_repo'] = pull_request['html_url'].split("/")[-1]
