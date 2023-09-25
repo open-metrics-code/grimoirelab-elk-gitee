@@ -43,6 +43,14 @@ from grimoire_elk.enriched.enrich import Enrich, metadata
 from grimoire_elk.elastic_mapping import Mapping as BaseMapping
 
 
+CATEGORY_ISSUE = "issue"
+CATEGORY_PULL_REQUEST = "pull_request"
+CATEGORY_REPO = 'repository'
+CATEGORY_EVENT = "event"
+CATEGORY_STARGAZER = "stargazer"
+CATEGORY_FORK = "fork"
+CATEGORY_WATCH = "watch"
+
 GITEE = 'https://gitee.com/'
 GITEE_ISSUES = "gitee_issues"
 GITEE_MERGES = "gitee_pulls"
@@ -252,7 +260,7 @@ class GiteeEnrich(Enrich):
         """Get the first date at which a comment was made to the issue by someone
         other than the user who created the issue and bot
         """
-        if item["body"] and "漏洞公开时间" in item["body"]:
+        if item["body"] and "漏洞公开时间" in item["body"] :
             issue_body = item["body"].splitlines()
             cve_body = {}
             for message in issue_body:
@@ -270,13 +278,17 @@ class GiteeEnrich(Enrich):
     @metadata
     def get_rich_item(self, item):
 
-        rich_item = {}
-        if item['category'] == 'issue':
-            rich_item = self.__get_rich_issue(item)
-        elif item['category'] == 'pull_request':
-            rich_item = self.__get_rich_pull(item)
-        elif item['category'] == 'repository':
-            rich_item = self.__get_rich_repo(item)
+        rich_category_switch = {
+            CATEGORY_ISSUE: lambda: self.__get_rich_issue(item),
+            CATEGORY_PULL_REQUEST: lambda: self.__get_rich_pull(item),
+            CATEGORY_REPO: lambda: self.__get_rich_repo(item),
+            CATEGORY_EVENT: lambda: self.__get_rich_event(item),
+            CATEGORY_STARGAZER: lambda: self.__get_rich_stargazer(item),
+            CATEGORY_FORK: lambda: self.__get_rich_fork(item),
+            CATEGORY_WATCH: lambda: self.__get_rich_watch(item)
+        }
+        if item['category'] in rich_category_switch:
+            rich_item = rich_category_switch[item['category']]()
         else:
             logger.error("[github] rich item not defined for GitHub category {}".format(
                          item['category']))
@@ -386,9 +398,7 @@ class GiteeEnrich(Enrich):
             rich_pr['time_to_first_attention_without_bot'] = \
                 get_time_diff_days(str_to_datetime(pull_request['created_at']),
                                     self.get_time_to_first_review_attention_without_bot(pull_request))
-        if 'linked_issues' in pull_request:
-            rich_pr['linked_issues_count'] = len(pull_request['linked_issues'])
-
+                                    
         rich_pr['commits_data'] = pull_request['commits_data']
 
         
@@ -583,6 +593,94 @@ class GiteeEnrich(Enrich):
         rich_repo.update(self.get_grimoire_fields(item['metadata__updated_on'], "repository"))
 
         return rich_repo
+
+    def __get_rich_event(self, item):
+        pass
+
+    def __get_rich_stargazer(self, item):
+        rich_stargazer = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_stargazer[f] = item[f]
+            else:
+                rich_stargazer[f] = None
+        # The real data
+        stargazer = item['data']
+        rich_stargazer["user_id"] = stargazer["id"]
+        rich_stargazer["user_login"] = stargazer["login"]
+        rich_stargazer["user_name"] = stargazer["name"]
+        rich_stargazer["auhtor_name"] = stargazer["name"]
+        rich_stargazer["user_html_url"] = stargazer["html_url"]
+        rich_stargazer['user_email'] = stargazer.get('email', None)
+        rich_stargazer['user_company'] = stargazer.get('company', None)
+        rich_stargazer["user_remark"] = stargazer["remark"]
+        rich_stargazer["user_type"] = stargazer["type"]
+        rich_stargazer["star_at"] = stargazer["star_at"]
+        rich_stargazer["created_at"] = stargazer["star_at"]
+                  
+        if self.prjs_map:
+            rich_stargazer.update(self.get_item_project(rich_stargazer))                  
+        rich_stargazer.update(self.get_grimoire_fields(stargazer['star_at'], "stargazer"))
+
+        return rich_stargazer
+
+    def __get_rich_fork(self, item):
+        rich_fork = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_fork[f] = item[f]
+            else:
+                rich_fork[f] = None
+        # The real data
+        fork = item['data']
+        fork_owner = fork['owner']
+        rich_fork["user_id"] = fork_owner["id"]
+        rich_fork["user_login"] = fork_owner["login"]
+        rich_fork["user_name"] = fork_owner["name"]
+        rich_fork["auhtor_name"] = fork_owner["name"]
+        rich_fork["user_html_url"] = fork_owner["html_url"]
+        rich_fork['user_email'] = fork_owner.get('email', None)
+        rich_fork['user_company'] = fork_owner.get('company', None)
+        rich_fork["user_remark"] = fork_owner["remark"]
+        rich_fork["user_type"] = fork_owner["type"]
+        rich_fork["fork_at"] = fork["created_at"]
+        rich_fork["created_at"] = fork["created_at"]
+                  
+        if self.prjs_map:
+            rich_fork.update(self.get_item_project(rich_fork))                  
+        rich_fork.update(self.get_grimoire_fields(fork['created_at'], "fork"))
+
+        return rich_fork
+
+    def __get_rich_watch(self, item):
+        rich_watch = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_watch[f] = item[f]
+            else:
+                rich_watch[f] = None
+        # The real data
+        watch = item['data']
+        rich_watch["user_id"] = watch["id"]
+        rich_watch["user_login"] = watch["login"]
+        rich_watch["user_name"] = watch["name"]
+        rich_watch["auhtor_name"] = watch["name"]
+        rich_watch["user_html_url"] = watch["html_url"]
+        rich_watch['user_email'] = watch.get('email', None)
+        rich_watch['user_company'] = watch.get('company', None)
+        rich_watch["user_remark"] = watch["remark"]
+        rich_watch["user_type"] = watch["type"]
+        rich_watch["watch_at"] = watch["watch_at"]
+        rich_watch["created_at"] = watch["watch_at"]
+                  
+        if self.prjs_map:
+            rich_watch.update(self.get_item_project(rich_watch))                  
+        rich_watch.update(self.get_grimoire_fields(watch['watch_at'], "watch"))
+
+        return rich_watch
 
     def enrich_onion(self, ocean_backend, enrich_backend,
                      in_index, out_index, data_source=None, no_incremental=False,
