@@ -101,6 +101,7 @@ class GiteeEnrich(Enrich):
     issue_roles = ['assignee_data', 'user_data']
     pr_roles = ['merged_by_data', 'user_data']
     roles = ['assignee_data', 'merged_by_data', 'user_data']
+    event_roles = ['actor', 'reporter']
 
     def __init__(self, db_sortinghat=None, db_projects_map=None, json_projects_map=None,
                  db_user='', db_password='', db_host=''):
@@ -574,6 +575,15 @@ class GiteeEnrich(Enrich):
         rich_repo['stargazers_count'] = repo['stargazers_count']
         rich_repo['fetched_on'] = repo['fetched_on']
         rich_repo['url'] = repo['html_url']
+        rich_repo['status'] = repo['status']
+        if repo["status"] in "关闭":
+            rich_repo['archived'] = True
+            rich_repo['archivedAt'] = repo['updated_at']
+        else:
+            rich_repo['archived'] = False
+            rich_repo['archivedAt'] = None
+        rich_repo['created_at'] = repo['created_at']
+        rich_repo['updated_at'] = repo['updated_at']
         
         rich_releases = []
         for release in repo['releases'] :
@@ -601,8 +611,103 @@ class GiteeEnrich(Enrich):
 
         return rich_repo
 
+    def get_event_type(self, action_type):
+        switch_event_type = {
+            "add_label": "LabeledEvent",
+            "remove_label": "UnlabeledEvent",
+            "closed_pr": "ClosedEvent",
+            "reopened_pr": "ReopenedEvent",
+            "set_assignee": "AssignedEvent",
+            "setting_assignee": "AssignedEvent",
+            "unset_assignee": "UnassignedEvent",
+            "change_assignee": "UnassignedEvent",
+            "set_milestone": "MilestonedEvent",
+            "setting_milestone": "MilestonedEvent",
+            "unset_milestone": "DemilestonedEvent",
+            "change_milestone": "DemilestonedEvent",
+            "update_title": "RenamedTitleEvent",
+            "change_title": "RenamedTitleEvent",
+            "merged_pr": "MergedEvent",
+            "update_description": "ChangeDescriptionEvent",
+            "change_description": "ChangeDescriptionEvent",
+            "setting_priority": "SettingPriorityEvent",
+            "change_priority": "ChangePriorityEvent"
+        }
+        if action_type in switch_event_type:
+            return switch_event_type[action_type]
+        else:
+            return ''.join(word.capitalize() for word in action_type.split('_')) + "Event"
+
     def __get_rich_event(self, item):
-        pass
+        rich_event = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_event[f] = item[f]
+            else:
+                rich_event[f] = None
+        # The real data
+        event = item['data']
+        main_content = item['data']['issue'] if 'issue' in event else item['data']['pull']
+        actor = item['data']['user']
+
+        # move the issue reporter to level of actor. This is needed to
+        # allow `get_item_sh` adding SortingHat identities
+        reporter = main_content['user']
+        item['data']['reporter'] = reporter
+        item['data']['actor'] = actor
+
+        rich_event['id'] = event['id']
+        rich_event['icon'] = event['icon']
+        rich_event['actor_username'] = actor['login']
+        rich_event['user_login'] = rich_event['actor_username']
+        rich_event['content'] = event['content']
+        rich_event['created_at'] = event['created_at']
+        rich_event['action_type'] = event['action_type']
+        rich_event['event_type'] = self.get_event_type(event['action_type'])
+        rich_event['repository'] = item["tag"]
+        rich_event['pull_request'] = False if 'issue' in event else True
+        rich_event['item_type'] = 'issue' if 'issue' in event else 'pull request'
+
+        rich_event['gitee_repo'] = rich_event['repository'].replace(GITEE, '')
+        rich_event['gitee_repo'] = re.sub('.git$', '', rich_event['gitee_repo'])
+        if rich_event['pull_request']:
+            rich_event['pull_id'] = main_content['id']
+            rich_event['pull_id_in_repo'] = main_content['html_url'].split("/")[-1]
+            rich_event['pull_title'] = main_content['title']
+            rich_event['pull_title_analyzed'] = main_content['title']
+            rich_event['pull_state'] = main_content['state']
+            rich_event['pull_created_at'] = main_content['created_at']
+            rich_event['pull_updated_at'] = main_content['updated_at']
+            rich_event['pull_closed_at'] = main_content['closed_at']
+            rich_event['pull_url'] = main_content['html_url']
+            rich_event['pull_labels'] = [label['name'] for label in main_content['labels']]
+            rich_event["pull_url_id"] = rich_event['gitee_repo'] + "/pull/" + rich_event['pull_id_in_repo']
+        else:
+            rich_event['issue_id'] = main_content['id']
+            rich_event['issue_id_in_repo'] = main_content['html_url'].split("/")[-1]
+            rich_event['issue_title'] = main_content['title']
+            rich_event['issue_title_analyzed'] = main_content['title']
+            rich_event['issue_state'] = main_content['state']
+            rich_event['issue_created_at'] = main_content['created_at']
+            rich_event['issue_updated_at'] = main_content['updated_at']
+            rich_event['issue_closed_at'] = main_content['finished_at']
+            rich_event['issue_finished_at'] = main_content['finished_at']
+            rich_event['issue_url'] = main_content['html_url']
+            rich_event['issue_labels'] = [label['name'] for label in main_content['labels']]
+            rich_event["issue_url_id"] = rich_event['gitee_repo'] + "/issues/" + rich_event['issue_id_in_repo']
+
+        if self.prjs_map:
+            rich_event.update(self.get_item_project(rich_event))
+
+        if 'project' in item:
+            rich_event['project'] = item['project']
+
+        rich_event.update(self.get_grimoire_fields(event['created_at'], "event"))
+        item[self.get_field_date()] = rich_event[self.get_field_date()]
+        rich_event.update(self.get_item_sh(item, self.event_roles))
+
+        return rich_event
 
     def __get_rich_stargazer(self, item):
         rich_stargazer = {}
