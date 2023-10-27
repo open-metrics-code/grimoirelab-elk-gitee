@@ -43,6 +43,14 @@ from grimoire_elk.enriched.enrich import Enrich, metadata
 from grimoire_elk.elastic_mapping import Mapping as BaseMapping
 
 
+CATEGORY_ISSUE = "issue"
+CATEGORY_PULL_REQUEST = "pull_request"
+CATEGORY_REPO = 'repository'
+CATEGORY_EVENT = "event"
+CATEGORY_STARGAZER = "stargazer"
+CATEGORY_FORK = "fork"
+CATEGORY_WATCH = "watch"
+
 GITEE = 'https://gitee.com/'
 GITEE_ISSUES = "gitee_issues"
 GITEE_MERGES = "gitee_pulls"
@@ -93,6 +101,7 @@ class GiteeEnrich(Enrich):
     issue_roles = ['assignee_data', 'user_data']
     pr_roles = ['merged_by_data', 'user_data']
     roles = ['assignee_data', 'merged_by_data', 'user_data']
+    event_roles = ['actor', 'reporter']
 
     def __init__(self, db_sortinghat=None, db_projects_map=None, json_projects_map=None,
                  db_user='', db_password='', db_host=''):
@@ -252,7 +261,7 @@ class GiteeEnrich(Enrich):
         """Get the first date at which a comment was made to the issue by someone
         other than the user who created the issue and bot
         """
-        if item["body"] and "漏洞公开时间" in item["body"]:
+        if item["body"] and "漏洞公开时间" in item["body"] :
             issue_body = item["body"].splitlines()
             cve_body = {}
             for message in issue_body:
@@ -270,13 +279,17 @@ class GiteeEnrich(Enrich):
     @metadata
     def get_rich_item(self, item):
 
-        rich_item = {}
-        if item['category'] == 'issue':
-            rich_item = self.__get_rich_issue(item)
-        elif item['category'] == 'pull_request':
-            rich_item = self.__get_rich_pull(item)
-        elif item['category'] == 'repository':
-            rich_item = self.__get_rich_repo(item)
+        rich_category_switch = {
+            CATEGORY_ISSUE: lambda: self.__get_rich_issue(item),
+            CATEGORY_PULL_REQUEST: lambda: self.__get_rich_pull(item),
+            CATEGORY_REPO: lambda: self.__get_rich_repo(item),
+            CATEGORY_EVENT: lambda: self.__get_rich_event(item),
+            CATEGORY_STARGAZER: lambda: self.__get_rich_stargazer(item),
+            CATEGORY_FORK: lambda: self.__get_rich_fork(item),
+            CATEGORY_WATCH: lambda: self.__get_rich_watch(item)
+        }
+        if item['category'] in rich_category_switch:
+            rich_item = rich_category_switch[item['category']]()
         else:
             logger.error("[github] rich item not defined for GitHub category {}".format(
                          item['category']))
@@ -346,6 +359,13 @@ class GiteeEnrich(Enrich):
             rich_pr['merge_author_org'] = None
             rich_pr['merge_author_location'] = None
             rich_pr['merge_author_geolocation'] = None
+        
+        testers_login = set()
+        [testers_login.add(tester.get('login')) for tester in pull_request['testers'] if 'testers' in pull_request]
+        rich_pr['testers_login'] = list(testers_login)
+        requested_reviewers_login = set()
+        [requested_reviewers_login.add(requested_reviewer.get('login')) for requested_reviewer in pull_request['assignees'] if 'assignees' in pull_request]
+        rich_pr['requested_reviewers_login'] = list(requested_reviewers_login)
 
         rich_pr['id'] = pull_request['id']
         rich_pr['id_in_repo'] = pull_request['html_url'].split("/")[-1]
@@ -386,9 +406,7 @@ class GiteeEnrich(Enrich):
             rich_pr['time_to_first_attention_without_bot'] = \
                 get_time_diff_days(str_to_datetime(pull_request['created_at']),
                                     self.get_time_to_first_review_attention_without_bot(pull_request))
-        if 'linked_issues' in pull_request:
-            rich_pr['linked_issues_count'] = len(pull_request['linked_issues'])
-
+                                    
         rich_pr['commits_data'] = pull_request['commits_data']
 
         
@@ -557,6 +575,15 @@ class GiteeEnrich(Enrich):
         rich_repo['stargazers_count'] = repo['stargazers_count']
         rich_repo['fetched_on'] = repo['fetched_on']
         rich_repo['url'] = repo['html_url']
+        rich_repo['status'] = repo['status']
+        if repo["status"] in "关闭":
+            rich_repo['archived'] = True
+            rich_repo['archivedAt'] = repo['updated_at']
+        else:
+            rich_repo['archived'] = False
+            rich_repo['archivedAt'] = None
+        rich_repo['created_at'] = repo['created_at']
+        rich_repo['updated_at'] = repo['updated_at']
         
         rich_releases = []
         for release in repo['releases'] :
@@ -583,6 +610,189 @@ class GiteeEnrich(Enrich):
         rich_repo.update(self.get_grimoire_fields(item['metadata__updated_on'], "repository"))
 
         return rich_repo
+
+    def get_event_type(self, action_type):
+        switch_event_type = {
+            "add_label": "LabeledEvent",
+            "remove_label": "UnlabeledEvent",
+            "closed_pr": "ClosedEvent",
+            "reopened_pr": "ReopenedEvent",
+            "set_assignee": "AssignedEvent",
+            "setting_assignee": "AssignedEvent",
+            "unset_assignee": "UnassignedEvent",
+            "change_assignee": "UnassignedEvent",
+            "set_milestone": "MilestonedEvent",
+            "setting_milestone": "MilestonedEvent",
+            "unset_milestone": "DemilestonedEvent",
+            "change_milestone": "DemilestonedEvent",
+            "update_title": "RenamedTitleEvent",
+            "change_title": "RenamedTitleEvent",
+            "merged_pr": "MergedEvent",
+            "update_description": "ChangeDescriptionEvent",
+            "change_description": "ChangeDescriptionEvent",
+            "setting_priority": "SettingPriorityEvent",
+            "change_priority": "ChangePriorityEvent"
+        }
+        if action_type in switch_event_type:
+            return switch_event_type[action_type]
+        else:
+            return ''.join(word.capitalize() for word in action_type.split('_')) + "Event"
+
+    def __get_rich_event(self, item):
+        rich_event = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_event[f] = item[f]
+            else:
+                rich_event[f] = None
+        # The real data
+        event = item['data']
+        main_content = item['data']['issue'] if 'issue' in event else item['data']['pull']
+        actor = item['data']['user']
+
+        # move the issue reporter to level of actor. This is needed to
+        # allow `get_item_sh` adding SortingHat identities
+        reporter = main_content['user']
+        item['data']['reporter'] = reporter
+        item['data']['actor'] = actor
+
+        rich_event['id'] = event['id']
+        rich_event['icon'] = event['icon']
+        rich_event['actor_username'] = actor['login']
+        rich_event['user_login'] = rich_event['actor_username']
+        rich_event['content'] = event['content']
+        rich_event['created_at'] = event['created_at']
+        rich_event['action_type'] = event['action_type']
+        rich_event['event_type'] = self.get_event_type(event['action_type'])
+        rich_event['repository'] = item["tag"]
+        rich_event['pull_request'] = False if 'issue' in event else True
+        rich_event['item_type'] = 'issue' if 'issue' in event else 'pull request'
+
+        rich_event['gitee_repo'] = rich_event['repository'].replace(GITEE, '')
+        rich_event['gitee_repo'] = re.sub('.git$', '', rich_event['gitee_repo'])
+        if rich_event['pull_request']:
+            rich_event['pull_id'] = main_content['id']
+            rich_event['pull_id_in_repo'] = main_content['html_url'].split("/")[-1]
+            rich_event['pull_title'] = main_content['title']
+            rich_event['pull_title_analyzed'] = main_content['title']
+            rich_event['pull_state'] = main_content['state']
+            rich_event['pull_created_at'] = main_content['created_at']
+            rich_event['pull_updated_at'] = main_content['updated_at']
+            rich_event['pull_closed_at'] = main_content['closed_at']
+            rich_event['pull_url'] = main_content['html_url']
+            rich_event['pull_labels'] = [label['name'] for label in main_content['labels']]
+            rich_event["pull_url_id"] = rich_event['gitee_repo'] + "/pull/" + rich_event['pull_id_in_repo']
+        else:
+            rich_event['issue_id'] = main_content['id']
+            rich_event['issue_id_in_repo'] = main_content['html_url'].split("/")[-1]
+            rich_event['issue_title'] = main_content['title']
+            rich_event['issue_title_analyzed'] = main_content['title']
+            rich_event['issue_state'] = main_content['state']
+            rich_event['issue_created_at'] = main_content['created_at']
+            rich_event['issue_updated_at'] = main_content['updated_at']
+            rich_event['issue_closed_at'] = main_content['finished_at']
+            rich_event['issue_finished_at'] = main_content['finished_at']
+            rich_event['issue_url'] = main_content['html_url']
+            rich_event['issue_labels'] = [label['name'] for label in main_content['labels']]
+            rich_event["issue_url_id"] = rich_event['gitee_repo'] + "/issues/" + rich_event['issue_id_in_repo']
+
+        if self.prjs_map:
+            rich_event.update(self.get_item_project(rich_event))
+
+        if 'project' in item:
+            rich_event['project'] = item['project']
+
+        rich_event.update(self.get_grimoire_fields(event['created_at'], "event"))
+        item[self.get_field_date()] = rich_event[self.get_field_date()]
+        rich_event.update(self.get_item_sh(item, self.event_roles))
+
+        return rich_event
+
+    def __get_rich_stargazer(self, item):
+        rich_stargazer = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_stargazer[f] = item[f]
+            else:
+                rich_stargazer[f] = None
+        # The real data
+        stargazer = item['data']
+        rich_stargazer["user_id"] = stargazer["id"]
+        rich_stargazer["user_login"] = stargazer["login"]
+        rich_stargazer["user_name"] = stargazer["name"]
+        rich_stargazer["auhtor_name"] = stargazer["name"]
+        rich_stargazer["user_html_url"] = stargazer["html_url"]
+        rich_stargazer['user_email'] = stargazer.get('email', None)
+        rich_stargazer['user_company'] = stargazer.get('company', None)
+        rich_stargazer["user_remark"] = stargazer["remark"]
+        rich_stargazer["user_type"] = stargazer["type"]
+        rich_stargazer["star_at"] = stargazer["star_at"]
+        rich_stargazer["created_at"] = stargazer["star_at"]
+                  
+        if self.prjs_map:
+            rich_stargazer.update(self.get_item_project(rich_stargazer))                  
+        rich_stargazer.update(self.get_grimoire_fields(stargazer['star_at'], "stargazer"))
+
+        return rich_stargazer
+
+    def __get_rich_fork(self, item):
+        rich_fork = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_fork[f] = item[f]
+            else:
+                rich_fork[f] = None
+        # The real data
+        fork = item['data']
+        fork_owner = fork['owner']
+        rich_fork["user_id"] = fork_owner["id"]
+        rich_fork["user_login"] = fork_owner["login"]
+        rich_fork["user_name"] = fork_owner["name"]
+        rich_fork["auhtor_name"] = fork_owner["name"]
+        rich_fork["user_html_url"] = fork_owner["html_url"]
+        rich_fork['user_email'] = fork_owner.get('email', None)
+        rich_fork['user_company'] = fork_owner.get('company', None)
+        rich_fork["user_remark"] = fork_owner["remark"]
+        rich_fork["user_type"] = fork_owner["type"]
+        rich_fork["fork_at"] = fork["created_at"]
+        rich_fork["created_at"] = fork["created_at"]
+                  
+        if self.prjs_map:
+            rich_fork.update(self.get_item_project(rich_fork))                  
+        rich_fork.update(self.get_grimoire_fields(fork['created_at'], "fork"))
+
+        return rich_fork
+
+    def __get_rich_watch(self, item):
+        rich_watch = {}
+
+        for f in self.RAW_FIELDS_COPY:
+            if f in item:
+                rich_watch[f] = item[f]
+            else:
+                rich_watch[f] = None
+        # The real data
+        watch = item['data']
+        rich_watch["user_id"] = watch["id"]
+        rich_watch["user_login"] = watch["login"]
+        rich_watch["user_name"] = watch["name"]
+        rich_watch["auhtor_name"] = watch["name"]
+        rich_watch["user_html_url"] = watch["html_url"]
+        rich_watch['user_email'] = watch.get('email', None)
+        rich_watch['user_company'] = watch.get('company', None)
+        rich_watch["user_remark"] = watch["remark"]
+        rich_watch["user_type"] = watch["type"]
+        rich_watch["watch_at"] = watch["watch_at"]
+        rich_watch["created_at"] = watch["watch_at"]
+                  
+        if self.prjs_map:
+            rich_watch.update(self.get_item_project(rich_watch))                  
+        rich_watch.update(self.get_grimoire_fields(watch['watch_at'], "watch"))
+
+        return rich_watch
 
     def enrich_onion(self, ocean_backend, enrich_backend,
                      in_index, out_index, data_source=None, no_incremental=False,
