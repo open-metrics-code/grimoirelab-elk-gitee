@@ -425,6 +425,7 @@ class GiteeEnrich2(Enrich):
             # extract reactions and add it to enriched item
             ecomment.update(self.__get_reactions(comment))
 
+            ecomment['comment_type'] = comment['comment_type']
             ecomment['comment_updated_at'] = comment['updated_at']
             ecomment['comment_created_at'] = comment.get('created_at', comment['updated_at'])
 
