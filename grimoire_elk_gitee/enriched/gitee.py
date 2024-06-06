@@ -412,6 +412,7 @@ class GiteeEnrich(Enrich):
         
         if 'linked_issues' in pull_request:
             rich_pr['linked_issues_count'] = len(pull_request['linked_issues'])
+            rich_pr['linked_issues'] = pull_request['linked_issues']
         
         if self.prjs_map:
             rich_pr.update(self.get_item_project(rich_pr))
